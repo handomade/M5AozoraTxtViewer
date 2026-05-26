@@ -43,9 +43,9 @@
 #define MAX_LINES_BUF    12  // 表示可能な最大行数より余裕を持たせる
 
 // フォントサイズ（切り替え可能: 10/12/14/16 px）
-int g_fontSize = 12;
+int g_fontSize = 16;
 inline int charW(int s)    { return (s == 1) ? (g_fontSize / 2) : g_fontSize; }
-inline int lineH()         { return g_fontSize + 3; }
+inline int lineH()         { return (g_fontSize >= 16) ? 18 : (g_fontSize + 3); }
 inline int maxLinesN()     { return CONTENT_H / lineH(); }
 
 // ============================================================
@@ -120,7 +120,7 @@ bool g_jpFontLoaded = false;
 // ============================================================
 // テーマカラー（ライト/ダークモード切替対応）
 // ============================================================
-bool g_lightMode = false;
+bool g_lightMode = true;
 inline uint16_t colBg()        { return g_lightMode ? 0xFFFF : 0x1002; }
 inline uint16_t colHeader()    { return g_lightMode ? 0x39E7 : 0x18E3; }
 inline uint16_t colAccent()    { return g_lightMode ? 0x047F : 0x05BF; }
@@ -168,6 +168,7 @@ void scanTextFiles() {
 // ============================================================
 #define PAGE_OFFSETS_MAX 2048
 #define READ_BUF_SIZE    256
+#define PAGE_CACHE_SIZE  3
 
 String   g_currentFile = "";
 uint32_t g_pageOffsets[PAGE_OFFSETS_MAX];
@@ -176,6 +177,14 @@ bool     g_pageInBlock[PAGE_OFFSETS_MAX];  // ページ開始時のskipBlock状�
 int      g_pageCount   = 0;
 int      g_currentPage = 0;
 bool     g_aozoraMode  = true;   // true=青空モード, false=通常モード
+
+struct PageCache {
+    int page;
+    int count;
+    String lines[MAX_LINES_BUF];
+};
+PageCache g_pageCache[PAGE_CACHE_SIZE];
+int g_cacheNextSlot = 0;
 
 Preferences g_prefs;
 
@@ -358,6 +367,54 @@ int loadPageLines(const String& filepath, int page, bool aozoraMode,
     f.close();
     return lineCount;
 }
+void clearPageCache() {
+    for (int i = 0; i < PAGE_CACHE_SIZE; i++) {
+        g_pageCache[i].page = -1;
+        g_pageCache[i].count = 0;
+        for (int j = 0; j < MAX_LINES_BUF; j++) g_pageCache[i].lines[j] = "";
+    }
+    g_cacheNextSlot = 0;
+}
+
+int findPageCache(int page) {
+    for (int i = 0; i < PAGE_CACHE_SIZE; i++) {
+        if (g_pageCache[i].page == page) return i;
+    }
+    return -1;
+}
+
+int cachePageLines(int page) {
+    if (page < 0 || page >= g_pageCount) return -1;
+    int slot = findPageCache(page);
+    if (slot >= 0) return slot;
+
+    slot = g_cacheNextSlot;
+    g_cacheNextSlot = (g_cacheNextSlot + 1) % PAGE_CACHE_SIZE;
+    g_pageCache[slot].page = page;
+    g_pageCache[slot].count = loadPageLines(g_currentFile, page, g_aozoraMode,
+                                            g_pageCache[slot].lines, maxLinesN());
+    return slot;
+}
+
+void prefetchNextPage(int page) {
+    cachePageLines(page + 1);
+}
+
+bool isEscKey(const Keyboard_Class::KeysState& st, char key) {
+    (void)st;
+    return key == 27 || key == '`' || key == '~';
+}
+
+int findPageByOffset(uint32_t targetOffset) {
+    int bestPage = 0;
+    int exactPage = -1;
+    for (int i = 0; i < g_pageCount; i++) {
+        if (g_pageOffsets[i] > targetOffset) break;
+        if (g_pageOffsets[i] == targetOffset && exactPage < 0) exactPage = i;
+        bestPage = i;
+    }
+    return (exactPage >= 0) ? exactPage : bestPage;
+}
 
 // ============================================================
 // 描画関数
@@ -368,11 +425,20 @@ void drawHeader(const String& title, int page, int total, bool aozoraMode) {
     M5Cardputer.Display.setFont(&fonts::Font0);
 
     // タイトル（左）
-    M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
-    M5Cardputer.Display.setCursor(MARGIN_X, 5);
-    String disp = title;
-    if (disp.length() > 12) disp = disp.substring(0, 11) + "~";
-    M5Cardputer.Display.print(disp);
+    String disp = fitLine(title, 102);
+    if (disp.length() < title.length()) disp += "~";
+    if (g_jpFontLoaded) {
+        g_ofr.setDrawer(M5Cardputer.Display);
+        g_ofr.setFontSize(12);
+        g_ofr.setFontColor(colPanelText(), colHeader());
+        g_ofr.drawString(disp.c_str(), MARGIN_X, 4);
+    } else {
+        M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+        M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
+        M5Cardputer.Display.setCursor(MARGIN_X, 4);
+        M5Cardputer.Display.print(disp);
+    }
+    M5Cardputer.Display.setFont(&fonts::Font0);
 
     // モード表示
     String modeStr = aozoraMode ? "[AZ]" : "[TX]";
@@ -412,6 +478,36 @@ void drawFooter(const String& msg) {
     }
 }
 
+void drawFileRow(int row) {
+    int idx = g_fileScroll + row;
+    int yPos = CONTENT_Y + row * FILE_ROW_H;
+    M5Cardputer.Display.fillRect(0, yPos, 240, FILE_ROW_H, colBg());
+    if (idx < 0 || idx >= g_fileCount) return;
+
+    bool selected = (idx == g_fileCursor);
+    String fname = g_fileList[idx];
+    int sl = fname.lastIndexOf('/'); if (sl >= 0) fname = fname.substring(sl + 1);
+    int dot = fname.lastIndexOf('.'); if (dot > 0) fname = fname.substring(0, dot);
+
+    uint16_t fg = selected ? colAccent() : colTextMain();
+    M5Cardputer.Display.setFont(&fonts::Font0);
+    M5Cardputer.Display.setTextColor(fg, colBg());
+    M5Cardputer.Display.setCursor(2, yPos + 3);
+    M5Cardputer.Display.print(selected ? ">" : " ");
+
+    if (g_jpFontLoaded) {
+        g_ofr.setDrawer(M5Cardputer.Display);
+        g_ofr.setFontSize(12);
+        g_ofr.setFontColor(fg, colBg());
+        g_ofr.drawString(fitLine(fname, 210).c_str(), MARGIN_X + 12, yPos + 1);
+    } else {
+        M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+        M5Cardputer.Display.setTextColor(fg, colBg());
+        M5Cardputer.Display.setCursor(MARGIN_X + 12, yPos + 1);
+        M5Cardputer.Display.print(fitLine(fname, 210));
+    }
+}
+
 void drawFileSelect() {
     M5Cardputer.Display.fillScreen(colBg());
     M5Cardputer.Display.fillRect(0, 0, 240, HEADER_HEIGHT, colHeader());
@@ -429,36 +525,11 @@ void drawFileSelect() {
         return;
     }
 
-    for (int i = 0; i < MAX_FILE_ROWS; i++) {
-        int idx = g_fileScroll + i;
-        if (idx >= g_fileCount) break;
-        int yPos = CONTENT_Y + i * FILE_ROW_H;
-        bool selected = (idx == g_fileCursor);
-
-        String fname = g_fileList[idx];
-        int sl = fname.lastIndexOf('/'); if (sl >= 0) fname = fname.substring(sl + 1);
-        int dot = fname.lastIndexOf('.'); if (dot > 0) fname = fname.substring(0, dot);
-
-        if (selected) M5Cardputer.Display.fillRect(2, yPos, 236, FILE_ROW_H - 1, colAccent());
-
-        uint16_t fg = selected ? colSelectText() : colTextMain();
-        uint16_t bg = selected ? colAccent() : colBg();
-
-        if (g_jpFontLoaded) {
-            g_ofr.setDrawer(M5Cardputer.Display);
-            g_ofr.setFontSize(12);
-            g_ofr.setFontColor(fg, bg);
-            g_ofr.drawString(fitLine(fname, 220).c_str(), MARGIN_X + 2, yPos + 1);
-        } else {
-            M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
-            M5Cardputer.Display.setTextColor(fg, bg);
-            M5Cardputer.Display.setCursor(MARGIN_X + 2, yPos + 1);
-            M5Cardputer.Display.print(fitLine(fname, 220));
-        }
-    }
+    g_fileScroll = (g_fileCursor / MAX_FILE_ROWS) * MAX_FILE_ROWS;
+    for (int i = 0; i < MAX_FILE_ROWS; i++) drawFileRow(i);
 
     M5Cardputer.Display.setFont(&fonts::Font0);
-    M5Cardputer.Display.setTextColor(colAccent());
+    M5Cardputer.Display.setTextColor(colAccent(), colBg());
     if (g_fileScroll > 0)
         M5Cardputer.Display.drawString("^", 228, CONTENT_Y);
     if (g_fileScroll + MAX_FILE_ROWS < g_fileCount)
@@ -468,7 +539,7 @@ void drawFileSelect() {
 }
 
 void drawReadingPage() {
-    M5Cardputer.Display.fillScreen(colBg());
+    M5Cardputer.Display.fillRect(0, HEADER_HEIGHT, 240, 135 - HEADER_HEIGHT - FOOTER_HEIGHT, colBg());
 
     String fname = g_currentFile;
     int sl = fname.lastIndexOf('/'); if (sl >= 0) fname = fname.substring(sl + 1);
@@ -476,27 +547,31 @@ void drawReadingPage() {
 
     drawHeader(fname, g_currentPage, g_pageCount, g_aozoraMode);
 
-    String lines[MAX_LINES_BUF];
-    int count = loadPageLines(g_currentFile, g_currentPage, g_aozoraMode, lines, maxLinesN());
+    int cacheSlot = cachePageLines(g_currentPage);
+    if (cacheSlot < 0) {
+        drawFooter("読込失敗");
+        return;
+    }
 
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < g_pageCache[cacheSlot].count; i++) {
         int yPos = CONTENT_Y + i * lineH();
-        if (lines[i].length() == 0) continue;
+        if (g_pageCache[cacheSlot].lines[i].length() == 0) continue;
 
         if (g_jpFontLoaded) {
             g_ofr.setDrawer(M5Cardputer.Display);
             g_ofr.setFontSize(g_fontSize);
             g_ofr.setFontColor(colTextMain(), colBg());
-            g_ofr.drawString(lines[i].c_str(), MARGIN_X, yPos);
+            g_ofr.drawString(g_pageCache[cacheSlot].lines[i].c_str(), MARGIN_X, yPos);
         } else {
             M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
             M5Cardputer.Display.setTextColor(colTextMain(), colBg());
             M5Cardputer.Display.setCursor(MARGIN_X, yPos);
-            M5Cardputer.Display.print(lines[i]);
+            M5Cardputer.Display.print(g_pageCache[cacheSlot].lines[i]);
         }
     }
 
     drawFooter("Ｈ ヘルプ");
+    prefetchNextPage(g_currentPage);
 }
 
 // ============================================================
@@ -510,7 +585,7 @@ void drawPopupBg(int x, int y, int w, int h) {
 // ============================================================
 // ヘルプポップアップ（H キー）
 // ============================================================
-void showHelp() {
+bool showHelp() {
     const int px = 10, py = 8, pw = 220, ph = 118;
     drawPopupBg(px, py, pw, ph);
     M5Cardputer.Display.setFont(&fonts::Font0);
@@ -529,7 +604,7 @@ void showHelp() {
         "Ｆ     文字サイズ",
         "Ｃ     配色切替",
         "Ｈ     ヘルプ",
-        "Ｅｓｃ ファイル一覧へ"
+        "Ｅｓｃ 一覧へ戻る"
     };
     M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
     M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
@@ -547,9 +622,14 @@ void showHelp() {
     // キー入力待ち
     while (true) {
         M5Cardputer.update();
-        if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) break;
+        if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
+            Keyboard_Class::KeysState st = M5Cardputer.Keyboard.keysState();
+            char key = st.word.empty() ? 0 : st.word[0];
+            return isEscKey(st, key);
+        }
         delay(10);
     }
+    return false;
 }
 
 // ============================================================
@@ -576,11 +656,16 @@ int showJumpDialog() {
         M5Cardputer.Display.fillRect(px + 8, py + 23, pw - 16, 28, colHeader());
         M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_16);
         M5Cardputer.Display.setTextColor(colAccent(), colHeader());
-        M5Cardputer.Display.setCursor(px + 10, py + 28);
         String pageInput = (input.length() > 0 ? input : String("___"));
+        String pageTotal = "/" + String(g_pageCount);
+        int inputW = M5Cardputer.Display.textWidth("8888");
+        int totalW = M5Cardputer.Display.textWidth(pageTotal.c_str());
+        int groupX = px + (pw - inputW - totalW) / 2;
+        int inputX = groupX + inputW - M5Cardputer.Display.textWidth(pageInput.c_str());
+        M5Cardputer.Display.setCursor(inputX, py + 28);
         M5Cardputer.Display.print(pageInput);
-        M5Cardputer.Display.setCursor(px + 82, py + 28);
-        M5Cardputer.Display.print("/ " + String(g_pageCount));
+        M5Cardputer.Display.setCursor(groupX + inputW, py + 28);
+        M5Cardputer.Display.print(pageTotal);
 
         // キー入力待ち
         while (true) {
@@ -595,7 +680,7 @@ int showJumpDialog() {
         if (st.del) {
             if (input.length() > 0) input.remove(input.length() - 1);
             else return -1;
-        } else if (key == 27) {
+        } else if (isEscKey(st, key)) {
             return -1;
         } else if (st.enter) {
             if (input.length() == 0) return -1;
@@ -617,6 +702,7 @@ void openFile(const String& filepath) {
     M5Cardputer.Display.setCursor(MARGIN_X, 40);
     M5Cardputer.Display.print("Building index...");
 
+    clearPageCache();
     g_currentFile  = filepath;
     g_currentPage  = 0;
     g_pageCount    = 0;
@@ -649,8 +735,8 @@ void saveSettings() {
 
 void loadSettings() {
     g_prefs.begin("aozora", true);
-    g_fontSize  = g_prefs.getInt("fontSize",  12);
-    g_lightMode = g_prefs.getBool("lightMode", false);
+    g_fontSize  = g_prefs.getInt("fontSize",  16);
+    g_lightMode = g_prefs.getBool("lightMode", true);
     g_prefs.end();
 }
 
@@ -680,6 +766,7 @@ void setup() {
     M5Cardputer.begin(cfg, true);
     M5Cardputer.Display.setRotation(1);
     loadSettings();  // NVSから色・フォントサイズを復元
+    clearPageCache();
     M5Cardputer.Display.fillScreen(colBg());
     M5Cardputer.Display.setFont(&fonts::Font0);
     M5Cardputer.Display.setTextColor(colTextMain());
@@ -723,8 +810,12 @@ void loop() {
         g_fontSize = sizes[idx];
         saveSettings();
         if (g_state == STATE_READING && g_currentFile.length() > 0) {
-            g_pageCount = 0; g_currentPage = 0;
+            uint32_t oldOffset = g_pageOffsets[g_currentPage];
+            clearPageCache();
+            g_pageCount = 0;
             buildPageIndex(g_currentFile, g_aozoraMode);
+            g_currentPage = findPageByOffset(oldOffset);
+            saveState(g_currentFile, g_currentPage, g_aozoraMode);
             drawReadingPage();
         } else { drawFileSelect(); }
         return;
@@ -737,8 +828,12 @@ void loop() {
     }
     // ---- H: ヘルプ表示（全画面共通） ----
     if (key == 'h' || key == 'H') {
-        showHelp();
-        if (g_state == STATE_READING) drawReadingPage(); else drawFileSelect();
+        bool escFromHelp = showHelp();
+        if (escFromHelp && g_state == STATE_READING) {
+            saveState(g_currentFile, g_currentPage, g_aozoraMode);
+            g_state = STATE_FILE_SELECT;
+            drawFileSelect();
+        } else if (g_state == STATE_READING) drawReadingPage(); else drawFileSelect();
         return;
     }
     // ---- J: ページジャンプ（読書中のみ） ----
@@ -756,16 +851,27 @@ void loop() {
     if (g_state == STATE_FILE_SELECT) {
         if (key == ';') {
             if (g_fileCursor > 0) {
+                int oldCursor = g_fileCursor;
+                int oldPage = g_fileCursor / MAX_FILE_ROWS;
                 g_fileCursor--;
-                if (g_fileCursor < g_fileScroll) g_fileScroll = g_fileCursor;
-                drawFileSelect();
+                int newPage = g_fileCursor / MAX_FILE_ROWS;
+                if (oldPage != newPage) drawFileSelect();
+                else {
+                    drawFileRow(oldCursor - g_fileScroll);
+                    drawFileRow(g_fileCursor - g_fileScroll);
+                }
             }
         } else if (key == '.') {
             if (g_fileCursor < g_fileCount - 1) {
+                int oldCursor = g_fileCursor;
+                int oldPage = g_fileCursor / MAX_FILE_ROWS;
                 g_fileCursor++;
-                if (g_fileCursor >= g_fileScroll + MAX_FILE_ROWS)
-                    g_fileScroll = g_fileCursor - MAX_FILE_ROWS + 1;
-                drawFileSelect();
+                int newPage = g_fileCursor / MAX_FILE_ROWS;
+                if (oldPage != newPage) drawFileSelect();
+                else {
+                    drawFileRow(oldCursor - g_fileScroll);
+                    drawFileRow(g_fileCursor - g_fileScroll);
+                }
             }
         } else if (status.enter) {
             if (g_fileCount > 0) openFile(g_fileList[g_fileCursor]);
@@ -795,12 +901,13 @@ void loop() {
             M5Cardputer.Display.print(g_aozoraMode ? "Mode: Aozora" : "Mode: Plain");
             M5Cardputer.Display.setCursor(MARGIN_X, 55);
             M5Cardputer.Display.print("Rebuilding index...");
+            clearPageCache();
             g_pageCount   = 0;
             g_currentPage = 0;
             buildPageIndex(g_currentFile, g_aozoraMode);
             saveState(g_currentFile, g_currentPage, g_aozoraMode);
             drawReadingPage();
-        } else if (key == 27) {
+        } else if (isEscKey(status, key)) {
             saveState(g_currentFile, g_currentPage, g_aozoraMode);
             g_state = STATE_FILE_SELECT;
             drawFileSelect();

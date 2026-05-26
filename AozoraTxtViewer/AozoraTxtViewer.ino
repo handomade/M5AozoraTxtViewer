@@ -40,7 +40,7 @@
 #define CONTENT_Y        (HEADER_HEIGHT + 4)
 #define CONTENT_H        (135 - HEADER_HEIGHT - FOOTER_HEIGHT - 4)
 #define MAX_LINE_PX      230
-#define MAX_LINES_BUF    8   // フォントサイズ変更時の最大行数バッファ
+#define MAX_LINES_BUF    12  // 表示可能な最大行数より余裕を持たせる
 
 // フォントサイズ（切り替え可能: 10/12/14/16 px）
 int g_fontSize = 12;
@@ -122,10 +122,13 @@ bool g_jpFontLoaded = false;
 // ============================================================
 bool g_lightMode = false;
 inline uint16_t colBg()        { return g_lightMode ? 0xFFFF : 0x1002; }
-inline uint16_t colHeader()    { return g_lightMode ? 0x8C51 : 0x18E3; }
-inline uint16_t colAccent()    { return 0x05BF; }
+inline uint16_t colHeader()    { return g_lightMode ? 0x39E7 : 0x18E3; }
+inline uint16_t colAccent()    { return g_lightMode ? 0x047F : 0x05BF; }
 inline uint16_t colTextMain()  { return g_lightMode ? 0x0000 : 0xFFFF; }
 inline uint16_t colTextDim()   { return g_lightMode ? 0x632C : 0x9492; }
+inline uint16_t colPanelText() { return 0xFFFF; }
+inline uint16_t colPanelDim()  { return g_lightMode ? 0xCE79 : 0x9492; }
+inline uint16_t colSelectText(){ return 0xFFFF; }
 inline uint16_t colHighlight() { return 0xF81F; }
 
 // ============================================================
@@ -168,6 +171,7 @@ void scanTextFiles() {
 
 String   g_currentFile = "";
 uint32_t g_pageOffsets[PAGE_OFFSETS_MAX];
+uint8_t  g_pageLineSkips[PAGE_OFFSETS_MAX]; // ページ開始時に読み飛ばす折り返し行数
 bool     g_pageInBlock[PAGE_OFFSETS_MAX];  // ページ開始時のskipBlock状態
 int      g_pageCount   = 0;
 int      g_currentPage = 0;
@@ -211,24 +215,60 @@ bool loadMode(const String& filepath) {
     return aozora;
 }
 
+int splitDisplayLines(const String& text, String lines[], int maxLines,
+                      int skipLines, int& lineCount) {
+    if (text.length() == 0) {
+        if (skipLines <= 0 && lines && lineCount < maxLines) lines[lineCount++] = "";
+        return 1;
+    }
+
+    const char* p = text.c_str();
+    String curLine;
+    int usedPx = 0;
+    int displayLine = 0;
+
+    while (*p) {
+        uint8_t c = (uint8_t)*p;
+        int step = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
+        int w = charW(step);
+        if (usedPx + w > MAX_LINE_PX) {
+            if (displayLine >= skipLines && lines && lineCount < maxLines) {
+                lines[lineCount++] = curLine;
+            }
+            displayLine++;
+            curLine = "";
+            usedPx = 0;
+            if (lines && lineCount >= maxLines) {
+                while (*p) {
+                    uint8_t c2 = (uint8_t)*p;
+                    int step2 = (c2 < 0x80) ? 1 : (c2 < 0xE0) ? 2 : (c2 < 0xF0) ? 3 : 4;
+                    int w2 = charW(step2);
+                    if (usedPx + w2 > MAX_LINE_PX) { displayLine++; usedPx = 0; }
+                    usedPx += w2;
+                    p += step2;
+                }
+                return displayLine + 1;
+            }
+        }
+        for (int i = 0; i < step; i++) curLine += (char)*(p + i);
+        usedPx += w;
+        p += step;
+    }
+
+    if (displayLine >= skipLines && lines && lineCount < maxLines) {
+        lines[lineCount++] = curLine;
+    }
+    return displayLine + 1;
+}
+
 // ---- 1行を処理してページに収まる行数を返す ----
 // aozoraMode=trueのときはmarkup除去・skip判定を適用する
 // 戻り値: この生行が占める表示行数（skipなら0）
 int calcDisplayLines(const String& raw, bool aozoraMode) {
     if (aozoraMode && isSkipLine(raw)) return 0;
     String text = aozoraMode ? removeAozoraMarkup(raw) : raw;
-    if (text.length() == 0) return 1; // 空行は1行分の余白
-    // 折り返し行数を計算
-    const char* p = text.c_str();
-    int usedPx = 0, lines = 1;
-    while (*p) {
-        uint8_t c = (uint8_t)*p;
-        int step = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
-        int w = charW(step);
-        if (usedPx + w > MAX_LINE_PX) { lines++; usedPx = 0; }
-        usedPx += w; p += step;
-    }
-    return lines;
+    int dummyCount = 0;
+    return splitDisplayLines(text, nullptr, 0, 0, dummyCount);
 }
 
 // ---- ページオフセットテーブル構築 ----
@@ -236,6 +276,7 @@ bool buildPageIndex(const String& filepath, bool aozoraMode) {
     File f = SD.open(filepath.c_str());
     if (!f) return false;
     g_pageOffsets[0] = 0;
+    g_pageLineSkips[0] = 0;
     g_pageInBlock[0] = false;
     g_pageCount = 1;
     int linesOnPage = 0;
@@ -256,24 +297,16 @@ bool buildPageIndex(const String& filepath, bool aozoraMode) {
         if (aozoraMode && inSkipBlock) continue;
         int dl = calcDisplayLines(raw, aozoraMode);
         if (dl == 0) continue;
-        // 追加するとオーバーフローする場合: このソース行の直前でページ区切り
-        if (linesOnPage > 0 && linesOnPage + dl > maxLinesN()) {
-            if (g_pageCount < PAGE_OFFSETS_MAX) {
+
+        for (int part = 0; part < dl && g_pageCount < PAGE_OFFSETS_MAX; part++) {
+            if (linesOnPage >= maxLinesN()) {
                 g_pageOffsets[g_pageCount] = lineStartPos;
+                g_pageLineSkips[g_pageCount] = part;
                 g_pageInBlock[g_pageCount] = inSkipBlock;
                 g_pageCount++;
+                linesOnPage = 0;
             }
-            linesOnPage = 0;
-        }
-        linesOnPage += dl;
-        // ちょうど満杯 or 1行でオーバーした場合: このソース行の直後でページ区切り
-        if (linesOnPage >= maxLinesN()) {
-            if (g_pageCount < PAGE_OFFSETS_MAX) {
-                g_pageOffsets[g_pageCount] = f.position();
-                g_pageInBlock[g_pageCount] = inSkipBlock;
-                g_pageCount++;
-            }
-            linesOnPage = 0;
+            linesOnPage++;
         }
     }
     f.close();
@@ -292,8 +325,13 @@ int loadPageLines(const String& filepath, int page, bool aozoraMode,
     char buf[READ_BUF_SIZE];
     while (f.available() && lineCount < maxLines) {
         uint32_t lineStart = f.position();
-        // 次ページ開始位置に達したら停止（buildPageIndexとの整合性を保証）
-        if (page + 1 < g_pageCount && lineStart >= g_pageOffsets[page + 1]) break;
+        int startSkip = (lineStart == g_pageOffsets[page]) ? g_pageLineSkips[page] : 0;
+        int stopSkip = -1;
+        if (page + 1 < g_pageCount) {
+            if (lineStart > g_pageOffsets[page + 1]) break;
+            if (lineStart == g_pageOffsets[page + 1]) stopSkip = g_pageLineSkips[page + 1];
+        }
+
         int len = 0;
         while (f.available() && len < READ_BUF_SIZE - 1) {
             char c = f.read();
@@ -307,27 +345,15 @@ int loadPageLines(const String& filepath, int page, bool aozoraMode,
         if (aozoraMode && inSkipBlock) continue;
         if (aozoraMode && isSkipLine(raw)) continue;
         String text = aozoraMode ? removeAozoraMarkup(raw) : raw;
-        if (text.length() == 0) {
-            if (lineCount < maxLines) lines[lineCount++] = "";
-            continue;
+
+        String wrapped[MAX_LINES_BUF];
+        int wrappedCount = 0;
+        int totalWrapped = splitDisplayLines(text, wrapped, MAX_LINES_BUF, 0, wrappedCount);
+        int endSkip = (stopSkip >= 0) ? min(stopSkip, totalWrapped) : totalWrapped;
+        for (int i = startSkip; i < endSkip && lineCount < maxLines && i < wrappedCount; i++) {
+            lines[lineCount++] = wrapped[i];
         }
-        // 折り返し処理
-        const char* p = text.c_str();
-        String curLine; int usedPx = 0;
-        while (*p) {
-            uint8_t c = (uint8_t)*p;
-            int step = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
-            int w = charW(step);
-            if (usedPx + w > MAX_LINE_PX) {
-                if (lineCount < maxLines) lines[lineCount++] = curLine;
-                curLine = ""; usedPx = 0;
-                if (lineCount >= maxLines) break;
-            }
-            for (int i = 0; i < step; i++) curLine += (char)*(p + i);
-            usedPx += w; p += step;
-        }
-        if (curLine.length() > 0 && lineCount < maxLines)
-            lines[lineCount++] = curLine;
+        if (stopSkip >= 0) break;
     }
     f.close();
     return lineCount;
@@ -342,7 +368,7 @@ void drawHeader(const String& title, int page, int total, bool aozoraMode) {
     M5Cardputer.Display.setFont(&fonts::Font0);
 
     // タイトル（左）
-    M5Cardputer.Display.setTextColor(colTextMain(), colHeader());
+    M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
     M5Cardputer.Display.setCursor(MARGIN_X, 5);
     String disp = title;
     if (disp.length() > 12) disp = disp.substring(0, 11) + "~";
@@ -355,14 +381,14 @@ void drawHeader(const String& title, int page, int total, bool aozoraMode) {
     M5Cardputer.Display.print(modeStr);
 
     // フォントサイズ表示
-    M5Cardputer.Display.setTextColor(colTextDim(), colHeader());
+    M5Cardputer.Display.setTextColor(colPanelDim(), colHeader());
     M5Cardputer.Display.setCursor(158, 5);
     M5Cardputer.Display.print(String(g_fontSize) + "px");
 
     // ページ番号（右）
     String pageStr = String(page + 1) + "/" + String(total);
     int pw = pageStr.length() * 6;
-    M5Cardputer.Display.setTextColor(colTextDim(), colHeader());
+    M5Cardputer.Display.setTextColor(colPanelDim(), colHeader());
     M5Cardputer.Display.setCursor(240 - pw - MARGIN_X, 5);
     M5Cardputer.Display.print(pageStr);
 }
@@ -370,16 +396,16 @@ void drawHeader(const String& title, int page, int total, bool aozoraMode) {
 void drawFooter(const String& msg) {
     int fy = 135 - FOOTER_HEIGHT;
     M5Cardputer.Display.fillRect(0, fy, 240, FOOTER_HEIGHT, colHeader());
-    M5Cardputer.Display.setFont(&fonts::Font0);
-    M5Cardputer.Display.setTextColor(colTextDim(), colHeader());
-    M5Cardputer.Display.setCursor(MARGIN_X, fy + 4);
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(colPanelDim(), colHeader());
+    M5Cardputer.Display.setCursor(MARGIN_X, fy + 3);
     M5Cardputer.Display.print(msg);
     // バッテリー残量（右端）
     int bat = M5Cardputer.Power.getBatteryLevel();
     if (bat >= 0) {
         String batStr = String(bat) + "%";
         int bw = batStr.length() * 6;
-        uint16_t batColor = (bat <= 20) ? colHighlight() : colTextDim();
+        uint16_t batColor = (bat <= 20) ? colHighlight() : colPanelDim();
         M5Cardputer.Display.setTextColor(batColor, colHeader());
         M5Cardputer.Display.setCursor(240 - bw - MARGIN_X, fy + 4);
         M5Cardputer.Display.print(batStr);
@@ -389,16 +415,17 @@ void drawFooter(const String& msg) {
 void drawFileSelect() {
     M5Cardputer.Display.fillScreen(colBg());
     M5Cardputer.Display.fillRect(0, 0, 240, HEADER_HEIGHT, colHeader());
-    M5Cardputer.Display.setFont(&fonts::Font0);
-    M5Cardputer.Display.setTextColor(colTextMain(), colHeader());
-    M5Cardputer.Display.setCursor(MARGIN_X, 5);
-    M5Cardputer.Display.print("Select Text File");
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
+    M5Cardputer.Display.setCursor(MARGIN_X, 4);
+    M5Cardputer.Display.print("テキスト選択");
 
     if (g_fileCount == 0) {
+        M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
         M5Cardputer.Display.setTextColor(TFT_RED);
         M5Cardputer.Display.setCursor(MARGIN_X, CONTENT_Y + 20);
-        M5Cardputer.Display.print("No .txt in /texts/");
-        drawFooter("Put UTF-8 .txt in /texts/");
+        M5Cardputer.Display.print("/texts/にtxtなし");
+        drawFooter("UTF-8 txtを/textsへ");
         return;
     }
 
@@ -414,7 +441,7 @@ void drawFileSelect() {
 
         if (selected) M5Cardputer.Display.fillRect(2, yPos - 1, 236, FILE_ROW_H, colAccent());
 
-        uint16_t fg = selected ? colBg()     : colTextMain();
+        uint16_t fg = selected ? colSelectText() : colTextMain();
         uint16_t bg = selected ? colAccent() : colBg();
 
         if (g_jpFontLoaded) {
@@ -437,7 +464,7 @@ void drawFileSelect() {
     if (g_fileScroll + MAX_FILE_ROWS < g_fileCount)
         M5Cardputer.Display.drawString("v", 228, CONTENT_Y + MAX_FILE_ROWS * FILE_ROW_H - 10);
 
-    drawFooter("Enter:Open  ;/.:Scroll");
+    drawFooter("Enter:開く  ;/.:移動");
 }
 
 void drawReadingPage() {
@@ -469,7 +496,7 @@ void drawReadingPage() {
         }
     }
 
-    drawFooter(".;:Page  J:Jump  M F C  H:Help");
+    drawFooter("頁.; J移動 M形式 F字 C色 H");
 }
 
 // ============================================================
@@ -492,28 +519,30 @@ void showHelp() {
     M5Cardputer.Display.setTextColor(colAccent(), colHeader());
     M5Cardputer.Display.setCursor(px + 6, py + 5);
     M5Cardputer.Display.print("AozoraTxtViewer v0.1");
-    M5Cardputer.Display.drawFastHLine(px + 4, py + 16, pw - 8, colTextDim());
+    M5Cardputer.Display.drawFastHLine(px + 4, py + 16, pw - 8, colPanelDim());
 
     // 操作一覧
     const char* items[] = {
-        ";/.   Prev / Next page",
-        "J     Jump to page",
-        "M     Aozora / Plain mode",
-        "F     Font size (10-16px)",
-        "C     Light / Dark theme",
-        "H     This help",
-        "Esc   Back to file list"
+        ";/.   前/次のページ",
+        "J     ページ移動",
+        "M     青空/通常",
+        "F     文字サイズ",
+        "C     配色切替",
+        "H     ヘルプ",
+        "Esc   ファイル一覧へ"
     };
-    M5Cardputer.Display.setTextColor(colTextMain(), colHeader());
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
     for (int i = 0; i < 7; i++) {
         M5Cardputer.Display.setCursor(px + 6, py + 20 + i * 12);
         M5Cardputer.Display.print(items[i]);
     }
 
     // フッターヒント
-    M5Cardputer.Display.setTextColor(colTextDim(), colHeader());
-    M5Cardputer.Display.setCursor(px + 50, py + 106);
-    M5Cardputer.Display.print("[ any key to close ]");
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(colPanelDim(), colHeader());
+    M5Cardputer.Display.setCursor(px + 40, py + 104);
+    M5Cardputer.Display.print("[ 何かキーで閉じる ]");
 
     // キー入力待ち
     while (true) {
@@ -528,25 +557,26 @@ void showHelp() {
 // 戻り値: 0-indexedページ番号、-1でキャンセル
 // ============================================================
 int showJumpDialog() {
-    const int px = 20, py = 38, pw = 200, ph = 60;
+    const int px = 18, py = 32, pw = 204, ph = 72;
     String input = "";
 
     drawPopupBg(px, py, pw, ph);
-    M5Cardputer.Display.setFont(&fonts::Font0);
-    M5Cardputer.Display.setTextColor(colTextMain(), colHeader());
-    M5Cardputer.Display.setCursor(px + 6, py + 6);
-    M5Cardputer.Display.print("Jump to page (1-");
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
+    M5Cardputer.Display.setCursor(px + 8, py + 7);
+    M5Cardputer.Display.print("ページ移動 1-");
     M5Cardputer.Display.print(g_pageCount);
-    M5Cardputer.Display.print("):");
-    M5Cardputer.Display.setTextColor(colTextDim(), colHeader());
-    M5Cardputer.Display.setCursor(px + 6, py + 46);
-    M5Cardputer.Display.print("Enter:OK  DEL:BS  Esc:Cancel");
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(colPanelDim(), colHeader());
+    M5Cardputer.Display.setCursor(px + 8, py + 56);
+    M5Cardputer.Display.print("Ent:OK DEL:戻 Esc:中止");
 
     while (true) {
         // 入力フィールド更新
-        M5Cardputer.Display.fillRect(px + 6, py + 18, pw - 12, 24, colHeader());
+        M5Cardputer.Display.fillRect(px + 8, py + 23, pw - 16, 28, colHeader());
+        M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_16);
         M5Cardputer.Display.setTextColor(colAccent(), colHeader());
-        M5Cardputer.Display.setCursor(px + 8, py + 22);
+        M5Cardputer.Display.setCursor(px + 10, py + 28);
         M5Cardputer.Display.print((input.length() > 0 ? input : String("___")) + " / " + String(g_pageCount));
 
         // キー入力待ち

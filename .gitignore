@@ -1,0 +1,9 @@
+*.bin
+*.elf
+*.map
+*.hex
+*.lst
+*.o
+*.d
+.pio/
+build/

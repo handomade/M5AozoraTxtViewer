@@ -142,7 +142,7 @@ AppState g_state = STATE_FILE_SELECT;
 // ============================================================
 #define TEXTS_DIR     "/texts"
 #define MAX_FILES     64
-#define FILE_ROW_H    16
+#define FILE_ROW_H    15
 #define MAX_FILE_ROWS 6
 
 String g_fileList[MAX_FILES];
@@ -439,20 +439,20 @@ void drawFileSelect() {
         int sl = fname.lastIndexOf('/'); if (sl >= 0) fname = fname.substring(sl + 1);
         int dot = fname.lastIndexOf('.'); if (dot > 0) fname = fname.substring(0, dot);
 
-        if (selected) M5Cardputer.Display.fillRect(2, yPos - 1, 236, FILE_ROW_H, colAccent());
+        if (selected) M5Cardputer.Display.fillRect(2, yPos, 236, FILE_ROW_H - 1, colAccent());
 
         uint16_t fg = selected ? colSelectText() : colTextMain();
         uint16_t bg = selected ? colAccent() : colBg();
 
         if (g_jpFontLoaded) {
             g_ofr.setDrawer(M5Cardputer.Display);
-            g_ofr.setFontSize(g_fontSize);
+            g_ofr.setFontSize(12);
             g_ofr.setFontColor(fg, bg);
-            g_ofr.drawString(fitLine(fname, 220).c_str(), MARGIN_X + 2, yPos + 2);
+            g_ofr.drawString(fitLine(fname, 220).c_str(), MARGIN_X + 2, yPos + 1);
         } else {
             M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
             M5Cardputer.Display.setTextColor(fg, bg);
-            M5Cardputer.Display.setCursor(MARGIN_X + 2, yPos + 2);
+            M5Cardputer.Display.setCursor(MARGIN_X + 2, yPos + 1);
             M5Cardputer.Display.print(fitLine(fname, 220));
         }
     }
@@ -462,7 +462,7 @@ void drawFileSelect() {
     if (g_fileScroll > 0)
         M5Cardputer.Display.drawString("^", 228, CONTENT_Y);
     if (g_fileScroll + MAX_FILE_ROWS < g_fileCount)
-        M5Cardputer.Display.drawString("v", 228, CONTENT_Y + MAX_FILE_ROWS * FILE_ROW_H - 10);
+        M5Cardputer.Display.drawString("v", 228, CONTENT_Y + MAX_FILE_ROWS * FILE_ROW_H - 8);
 
     drawFooter("Enter:開く  ;/.:移動");
 }
@@ -496,7 +496,7 @@ void drawReadingPage() {
         }
     }
 
-    drawFooter("頁.; J移動 M形式 F字 C色 H");
+    drawFooter("Ｈ ヘルプ");
 }
 
 // ============================================================
@@ -523,13 +523,13 @@ void showHelp() {
 
     // 操作一覧
     const char* items[] = {
-        ";/.   前/次のページ",
-        "J     ページ移動",
-        "M     青空/通常",
-        "F     文字サイズ",
-        "C     配色切替",
-        "H     ヘルプ",
-        "Esc   ファイル一覧へ"
+        "；／． 前／次のページ",
+        "Ｊ     ページ移動",
+        "Ｍ     青空／通常",
+        "Ｆ     文字サイズ",
+        "Ｃ     配色切替",
+        "Ｈ     ヘルプ",
+        "Ｅｓｃ ファイル一覧へ"
     };
     M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
     M5Cardputer.Display.setTextColor(colPanelText(), colHeader());
@@ -577,7 +577,10 @@ int showJumpDialog() {
         M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_16);
         M5Cardputer.Display.setTextColor(colAccent(), colHeader());
         M5Cardputer.Display.setCursor(px + 10, py + 28);
-        M5Cardputer.Display.print((input.length() > 0 ? input : String("___")) + " / " + String(g_pageCount));
+        String pageInput = (input.length() > 0 ? input : String("___"));
+        M5Cardputer.Display.print(pageInput);
+        M5Cardputer.Display.setCursor(px + 82, py + 28);
+        M5Cardputer.Display.print("/ " + String(g_pageCount));
 
         // キー入力待ち
         while (true) {

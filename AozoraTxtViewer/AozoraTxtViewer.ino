@@ -117,6 +117,20 @@ String fitLine(const String& s, int maxPx) {
 OpenFontRender g_ofr;
 bool g_jpFontLoaded = false;
 
+enum FontLoadSource {
+    FONT_LOAD_NONE,
+    FONT_LOAD_SD,
+    FONT_LOAD_ERROR
+};
+
+FontLoadSource g_fontLoadSource = FONT_LOAD_NONE;
+String g_fontFileName = "";
+size_t g_fontFileSize = 0;
+size_t g_fontBytesRead = 0;
+FT_Error g_fontLoadError = 0;
+bool g_fontReadComplete = false;
+String g_fontDiagNote = "not loaded";
+
 // ============================================================
 // テーマカラー（ライト/ダークモード切替対応）
 // ============================================================
@@ -478,10 +492,11 @@ void drawFooter(const String& msg) {
     }
 }
 
-void drawFileRow(int row) {
+void drawFileRow(int row, bool clearText = true) {
     int idx = g_fileScroll + row;
     int yPos = CONTENT_Y + row * FILE_ROW_H;
-    M5Cardputer.Display.fillRect(0, yPos, 240, FILE_ROW_H, colBg());
+    if (clearText) M5Cardputer.Display.fillRect(0, yPos, 240, FILE_ROW_H, colBg());
+    else M5Cardputer.Display.fillRect(0, yPos, MARGIN_X + 10, FILE_ROW_H, colBg());
     if (idx < 0 || idx >= g_fileCount) return;
 
     bool selected = (idx == g_fileCursor);
@@ -535,7 +550,7 @@ void drawFileSelect() {
     if (g_fileScroll + MAX_FILE_ROWS < g_fileCount)
         M5Cardputer.Display.drawString("v", 228, CONTENT_Y + MAX_FILE_ROWS * FILE_ROW_H - 8);
 
-    drawFooter("Enter:開く  ;/.:移動");
+    drawFooter("Enter:開く  ;/.:移動  ,/:頁");
 }
 
 void drawReadingPage() {
@@ -741,21 +756,93 @@ void loadSettings() {
 }
 
 // ============================================================
-// TTFフォントロード（MP3プレイヤーと同じ方式）
+// フォント読み込みプログレスバー
+// ============================================================
+void drawLoadProgress(size_t current, size_t total) {
+    const int barX = MARGIN_X, barY = 55, barW = 200, barH = 10;
+    int filled = (total > 0) ? (int)((uint64_t)current * (barW - 2) / total) : 0;
+    filled = constrain(filled, 0, barW - 2);
+    M5Cardputer.Display.drawRect(barX, barY, barW, barH, colAccent());
+    M5Cardputer.Display.fillRect(barX + 1, barY + 1, filled, barH - 2, colAccent());
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%3d%%", (total > 0) ? (int)((uint64_t)current * 100 / total) : 0);
+    M5Cardputer.Display.setFont(&fonts::Font0);
+    M5Cardputer.Display.setTextColor(colTextMain(), colBg());
+    M5Cardputer.Display.setCursor(barX + barW + 4, barY + 1);
+    M5Cardputer.Display.print(buf);
+}
+
+const char* fontLoadSourceText() {
+    switch (g_fontLoadSource) {
+        case FONT_LOAD_SD:    return "SD fallback";
+        case FONT_LOAD_ERROR: return "ERROR";
+        default:              return "NONE";
+    }
+}
+
+// ============================================================
+// TTFフォント読み込み
 // ============================================================
 void loadJpFont() {
+    M5Cardputer.Display.setFont(&fonts::Font0);
+    M5Cardputer.Display.setTextColor(colTextMain(), colBg());
+
     File dir = SD.open("/fonts");
-    if (!dir || !dir.isDirectory()) return;
+    if (!dir || !dir.isDirectory()) {
+        g_fontLoadSource = FONT_LOAD_ERROR;
+        g_fontDiagNote = "/fonts not found";
+        M5Cardputer.Display.setCursor(MARGIN_X, 40);
+        M5Cardputer.Display.print("Font: /fonts not found");
+        return;
+    }
     File f = dir.openNextFile();
     while (f) {
         String name = f.name(); name.toLowerCase();
         if (name.endsWith(".ttf")) {
+            size_t fileSize = f.size();
             String path = f.path();
-            if (g_ofr.loadFont(path.c_str()) == 0) g_jpFontLoaded = true;
-            break;
+            String fname = String(f.name());
+            g_fontFileName = fname;
+            g_fontFileSize = fileSize;
+            g_fontBytesRead = 0;
+            g_fontLoadError = 0;
+            g_fontReadComplete = false;
+            g_fontDiagNote = "starting";
+
+            // フォントファイル名とサイズを表示
+            M5Cardputer.Display.fillRect(0, 40, 240, 10, colBg());
+            M5Cardputer.Display.setCursor(MARGIN_X, 40);
+            char info[48];
+            snprintf(info, sizeof(info), "Font: %s (%uKB)",
+                     fname.c_str(), (unsigned)(fileSize / 1024));
+            M5Cardputer.Display.print(info);
+
+            // SDから直接読み込み
+            M5Cardputer.Display.fillRect(0, 68, 240, 10, colBg());
+            M5Cardputer.Display.setCursor(MARGIN_X, 68);
+            FT_Error err = g_ofr.loadFont(path.c_str());
+            g_fontLoadError = err;
+            if (err == 0) {
+                g_jpFontLoaded = true;
+                g_fontLoadSource = FONT_LOAD_SD;
+                g_fontDiagNote = "loaded from SD";
+                M5Cardputer.Display.print("Font: loaded OK");
+            } else {
+                g_fontLoadSource = FONT_LOAD_ERROR;
+                g_fontDiagNote = "loadFont failed";
+                snprintf(info, sizeof(info), "Font: err %d", (int)err);
+                M5Cardputer.Display.print(info);
+            }
+            f.close();
+            dir.close();
+            return;
         }
         f = dir.openNextFile();
     }
+    g_fontLoadSource = FONT_LOAD_ERROR;
+    g_fontDiagNote = "no .ttf in /fonts";
+    M5Cardputer.Display.setCursor(MARGIN_X, 40);
+    M5Cardputer.Display.print("Font: no .ttf in /fonts");
 }
 
 // ============================================================
@@ -765,6 +852,9 @@ void setup() {
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
     M5Cardputer.Display.setRotation(1);
+
+
+
     loadSettings();  // NVSから色・フォントサイズを復元
     clearPageCache();
     M5Cardputer.Display.fillScreen(colBg());
@@ -786,7 +876,9 @@ void setup() {
     M5Cardputer.Display.print("Loading font...");
     loadJpFont();
 
-    M5Cardputer.Display.setCursor(MARGIN_X, 55);
+    // showFontLoadDiag();  // Removed: debug display
+
+    M5Cardputer.Display.setCursor(MARGIN_X, 85);
     M5Cardputer.Display.print("Scanning files...");
     scanTextFiles();
 
@@ -857,8 +949,8 @@ void loop() {
                 int newPage = g_fileCursor / MAX_FILE_ROWS;
                 if (oldPage != newPage) drawFileSelect();
                 else {
-                    drawFileRow(oldCursor - g_fileScroll);
-                    drawFileRow(g_fileCursor - g_fileScroll);
+                    drawFileRow(oldCursor - g_fileScroll, false);
+                    drawFileRow(g_fileCursor - g_fileScroll, false);
                 }
             }
         } else if (key == '.') {
@@ -869,9 +961,19 @@ void loop() {
                 int newPage = g_fileCursor / MAX_FILE_ROWS;
                 if (oldPage != newPage) drawFileSelect();
                 else {
-                    drawFileRow(oldCursor - g_fileScroll);
-                    drawFileRow(g_fileCursor - g_fileScroll);
+                    drawFileRow(oldCursor - g_fileScroll, false);
+                    drawFileRow(g_fileCursor - g_fileScroll, false);
                 }
+            }
+        } else if (key == ',' || key == '<') {
+            if (g_fileCursor >= MAX_FILE_ROWS) {
+                g_fileCursor -= MAX_FILE_ROWS;
+                drawFileSelect();
+            }
+        } else if (key == '/' || key == '>') {
+            if (g_fileCursor + MAX_FILE_ROWS < g_fileCount) {
+                g_fileCursor = min(g_fileCursor + MAX_FILE_ROWS, g_fileCount - 1);
+                drawFileSelect();
             }
         } else if (status.enter) {
             if (g_fileCount > 0) openFile(g_fileList[g_fileCursor]);

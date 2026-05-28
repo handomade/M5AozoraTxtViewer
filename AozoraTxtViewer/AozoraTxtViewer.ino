@@ -43,7 +43,7 @@ void drawFileListOnly();
 #define FOOTER_HEIGHT    18
 #define MARGIN_X          5
 #define CONTENT_Y        (HEADER_HEIGHT + 4)
-#define MAX_LINE_PX      (240 - MARGIN_X * 2 - 15)  // ★ 225px → 210px（内蔵フォント用に余裕を拡大）
+#define MAX_LINE_PX      (240 - MARGIN_X * 2 - 5)  // 225px（charW()で正確な幅を計算）
 #define MAX_LINES_BUF    12  // 表示可能な最大行数より余裕を持たせる
 
 // フッター表示制御（動的CONTENT_H計算用）

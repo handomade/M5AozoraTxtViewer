@@ -284,8 +284,9 @@ int getMaxCharsPerLine() {
         if (g_fontSize >= 14) return 16;  // 14px: 230px / 14px ≈ 16文字
         return 19;                         // 12px以下: 230px / 12px ≈ 19文字
     } else {
-        // 内蔵フォント12px固定: 230px / 11px ≈ 20文字
-        return 20;
+        // 内蔵フォント lgfxJapanGothic_12: 実幅≒12px
+        // 230px / 12px ≈ 19文字（20文字では画面端でLGFXが自動折り返しして左端に重なる）
+        return 19;
     }
 }
 
@@ -978,6 +979,7 @@ void drawReadingPage() {
             // 内蔵フォント固定12px
             M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
             M5Cardputer.Display.setTextColor(colTextMain(), colBg());
+            M5Cardputer.Display.setTextWrap(false);  // ★ 自動折り返し無効（LGFX画面端折り返し防止）
             M5Cardputer.Display.setCursor(MARGIN_X, yPos);
             M5Cardputer.Display.print(g_pageCache[cacheSlot].lines[i]);
         }
@@ -1370,33 +1372,36 @@ void loop() {
     }
     // ---- Q: フォント切替（全画面共通、TTFが読み込まれている場合のみ） ----
     if ((key == 'q' || key == 'Q') && g_jpFontLoaded) {
+        uint32_t oldOffset = (g_pageCount > 0 && g_currentPage < g_pageCount)
+                             ? g_pageOffsets[g_currentPage] : 0;
+
         if (g_useTTFFont) {
             // TTF→内蔵フォント切替
             g_useTTFFont = false;
-            
-            // TTFが12px以外だった場合、インデックスを12px前提で再構築
-            if (g_fontSize != 12 && g_state == STATE_READING && g_currentFile.length() > 0) {
-                uint32_t oldOffset = g_pageOffsets[g_currentPage];
-                M5Cardputer.Display.fillScreen(colBg());
-                M5Cardputer.Display.setFont(&fonts::Font0);
-                M5Cardputer.Display.setTextColor(colTextMain());
-                M5Cardputer.Display.setCursor(MARGIN_X, 40);
-                M5Cardputer.Display.print("Rebuilding index...");
-                drawProgressBar(0);
-                clearPageCache();
-                g_pageCount = 0;
-                g_fontSize = 12;  // ★ 内蔵フォント用に12pxに固定
-                buildPageIndex(g_currentFile, g_aozoraMode);
-                g_currentPage = findPageByOffset(oldOffset);
-                saveState(g_currentFile, g_currentPage, g_aozoraMode);
-            }
-            saveSettings();  // ★ 最後に保存
+            g_fontSize = 12;  // 内蔵フォントは常に12px固定
         } else {
             // 内蔵フォント→TTF切替
             g_useTTFFont = true;
-            saveSettings();
+            // g_fontSize は saveSettings() で保存された最後のTTFサイズを維持
         }
-        
+        saveSettings();
+
+        // ★ フォント種別が変わるとgetMaxCharsPerLine()の値が変わるため、
+        //    常にインデックスを再構築する（TTF→内蔵、内蔵→TTF 両方向）
+        if (g_state == STATE_READING && g_currentFile.length() > 0) {
+            M5Cardputer.Display.fillScreen(colBg());
+            M5Cardputer.Display.setFont(&fonts::Font0);
+            M5Cardputer.Display.setTextColor(colTextMain());
+            M5Cardputer.Display.setCursor(MARGIN_X, 40);
+            M5Cardputer.Display.print("Rebuilding index...");
+            drawProgressBar(0);
+            clearPageCache();
+            g_pageCount = 0;
+            buildPageIndex(g_currentFile, g_aozoraMode);
+            g_currentPage = findPageByOffset(oldOffset);
+            saveState(g_currentFile, g_currentPage, g_aozoraMode);
+        }
+
         if (g_state == STATE_FILE_SELECT) drawFileSelect(); else drawReadingPage();
         return;
     }

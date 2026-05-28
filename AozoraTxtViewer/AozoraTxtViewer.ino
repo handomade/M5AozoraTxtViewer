@@ -39,11 +39,14 @@ void drawFileListOnly();
 // ============================================================
 // 画面レイアウト定数
 // ============================================================
+// 画面寸法：240×135px（M5Cardputer）
+// ヘッダー：20px、フッター：18px、パディング：4px
+// 実描画領域：240 - 左右マージン(5×2) = 230px
 #define HEADER_HEIGHT    20
 #define FOOTER_HEIGHT    18
 #define MARGIN_X          5
 #define CONTENT_Y        (HEADER_HEIGHT + 4)
-#define MAX_LINE_PX      (240 - MARGIN_X * 2 - 5)  // 225px（charW()で正確な幅を計算）
+#define MAX_LINE_PX      (240 - MARGIN_X * 2)  // ★ 230px（正確な値）
 #define MAX_LINES_BUF    12  // 表示可能な最大行数より余裕を持たせる
 
 // フッター表示制御（動的CONTENT_H計算用）
@@ -54,6 +57,34 @@ inline int getContentHeight() { return (135 - HEADER_HEIGHT - (g_showFooter ? FO
 int g_fontSize = 12;  // ★ デフォルトは内蔵フォント用に12px
 
 // ★ charW()関数はグローバル変数の後に定義される（下部参照）
+// 
+// ★★ フォント幅の詳細計算（参考値）★★
+// 内蔵フォント（lgfxJapanGothic_12, 12px固定）:
+//   - 日本語（ひらがな・カタカナ・漢字）：約11px
+//   - ASCII記号・数字：約5-6px
+//   - 1ページの最大行数：93px / (12+3)px = 6行
+//   - 1行の最大文字数：230px / 11px ≈ 20文字（日本語のみ）
+//   - 1行の最大バイト数：20文字 × 3バイト = 60バイト（日本語のみ）
+//   - バッファサイズ256バイト ⇒ 余裕あり（複数行分でも安全）
+//
+// TTFモード12px:
+//   - 文字幅：12px（日本語）、6px（ASCII）
+//   - 行高さ：15px
+//   - 1ページの最大行数：6行
+//   - 1行の最大文字数：230 / 12 ≈ 19文字
+//
+// TTFモード14px:
+//   - 文字幅：14px（日本語）、7px（ASCII）
+//   - 行高さ：17px
+//   - 1ページの最大行数：5行
+//   - 1行の最大文字数：230 / 14 ≈ 16文字
+//
+// TTFモード16px:
+//   - 文字幅：16px（日本語）、8px（ASCII）
+//   - 行高さ：18px
+//   - 1ページの最大行数：5行
+//   - 1行の最大文字数：230 / 16 ≈ 14文字
+
 inline int lineH()         { return (g_fontSize >= 16) ? 18 : (g_fontSize + 3); }
 inline int maxLinesN()     { return getContentHeight() / lineH(); }
 

@@ -376,21 +376,29 @@ bool loadMode(const String& filepath) {
 //    バッファ切断位置のズレによるページ境界ミスを防ぐ
 int readLine(File& f, char* buf, int bufSize) {
     int len = 0;
+    bool overflowed = false;
     while (f.available()) {
         char c = f.read();
         if (c == '\n') break;
         if (c == '\r') continue;
         if (len < bufSize - 1) {
             buf[len++] = c;
+        } else {
+            overflowed = true;
+            // バッファ満杯でも行末(\n)まで読み捨て：ファイル位置ズレを防ぐ
         }
-        // バッファ満杯でも行末(\n)まで読み捨て：ファイル位置ズレを防ぐ
     }
-    // UTF-8マルチバイト文字がバッファ末尾で切断されるのを防ぐ
-    // 先頭バイト(0x00-0x7F or 0xC0-0xFF)が来るまで末尾を削る
-    while (len > 0) {
-        uint8_t last = (uint8_t)buf[len - 1];
-        if (last < 0x80 || last >= 0xC0) break;
-        len--;
+    // ★ バッファ溢れ時のみ末尾の不完全UTF-8シーケンスをトリム
+    // 　 通常行(\\nで終了)はトリム不要：完全なシーケンスのまま
+    // 　 旧コードは常にトリムしていたため「。」等の末尾文字が毎回消えていた
+    if (overflowed) {
+        // 末尾から継続バイト(10xxxxxx)を逆方向にスキップして先頭バイトを探す
+        int i = len - 1;
+        while (i > 0 && ((uint8_t)buf[i] & 0xC0) == 0x80) i--;
+        // buf[i]が先頭バイト。シーケンス長を確認
+        uint8_t b = (uint8_t)buf[i];
+        int seq = (b < 0x80) ? 1 : (b < 0xE0) ? 2 : (b < 0xF0) ? 3 : 4;
+        if (len - i < seq) len = i;  // 不完全シーケンスを除去
     }
     buf[len] = '\0';
     return len;

@@ -46,7 +46,7 @@ bool g_showFooter = true;
 inline int getContentHeight() { return (135 - HEADER_HEIGHT - (g_showFooter ? FOOTER_HEIGHT : 0) - 4); }
 
 // フォントサイズ（切り替え可能: 10/12/14/16 px）
-int g_fontSize = 16;
+int g_fontSize = 12;  // ★ デフォルトは内蔵フォント用に12px
 inline int charW(int s)    { return (s == 1) ? (g_fontSize / 2) : g_fontSize; }
 inline int lineH()         { return (g_fontSize >= 16) ? 18 : (g_fontSize + 3); }
 inline int maxLinesN()     { return getContentHeight() / lineH(); }
@@ -774,6 +774,7 @@ void moveCursor(int newCursor) {
 }
 
 void drawFileSelect() {
+    g_fontSize = 12;  // ★ ファイル選択モードでは常に12px
     M5Cardputer.Display.fillScreen(colBg());
     M5Cardputer.Display.fillRect(0, 0, 240, HEADER_HEIGHT, colHeader());
     M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
@@ -1058,6 +1059,12 @@ void openFile(const String& filepath) {
     g_pageCount    = 0;
     g_aozoraMode   = loadMode(filepath);   // ← ファイルごとのモードを復元
 
+    // ★ ファイル開き時にフォントサイズを正しく設定
+    if (!g_useTTFFont) {
+        g_fontSize = 12;  // 内蔵フォントは常に12px
+    }
+    // TTFモードの場合は、前回保存されたg_fontSizeを使用（loadSettings()で既に読み込み済み）
+
     if (!buildPageIndex(filepath, g_aozoraMode)) {
         M5Cardputer.Display.setTextColor(TFT_RED);
         M5Cardputer.Display.setCursor(MARGIN_X, 60);
@@ -1089,7 +1096,7 @@ void saveSettings() {
 
 void loadSettings() {
     g_prefs.begin("aozora", true);
-    g_fontSize  = g_prefs.getInt("fontSize",   16);
+    g_fontSize  = g_prefs.getInt("fontSize",   12);  // ★ デフォルト12px（ファイル選択時用）
     g_lightMode = g_prefs.getBool("lightMode",  true);
     g_showFooter = g_prefs.getBool("showFooter", true);
     g_autoBrightnessEnabled = g_prefs.getBool("autoBright", true);
@@ -1405,6 +1412,12 @@ void loop() {
             drawReadingPage();
         } else if (isEscKey(status, key)) {
             saveState(g_currentFile, g_currentPage, g_aozoraMode);
+            // ★ TTFモード → ファイル選択モードに移行する時、内蔵フォント固定化
+            if (g_useTTFFont) {
+                g_useTTFFont = false;
+                g_fontSize = 12;
+                saveSettings();
+            }
             g_state = STATE_FILE_SELECT;
             drawFileSelect();
         }

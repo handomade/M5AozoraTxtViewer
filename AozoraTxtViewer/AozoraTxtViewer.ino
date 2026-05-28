@@ -1009,7 +1009,7 @@ bool showHelp() {
     // タイトル
     M5Cardputer.Display.setTextColor(colAccent(), colHeader());
     M5Cardputer.Display.setCursor(px + 6, py + 5);
-    M5Cardputer.Display.print("AozoraTxtViewer v0.1");
+    M5Cardputer.Display.print("AozoraTxtViewer v1.0");
     M5Cardputer.Display.drawFastHLine(px + 4, py + 16, pw - 8, colPanelDim());
 
     // 操作一覧

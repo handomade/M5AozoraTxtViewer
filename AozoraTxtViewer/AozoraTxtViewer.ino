@@ -85,21 +85,6 @@ int g_fontSize = 12;  // ★ デフォルトは内蔵フォント用に12px
 //   - 1ページの最大行数：5行
 //   - 1行の最大文字数：230 / 16 ≈ 14文字
 
-// ★ フォントサイズごとの1行最大文字数（折り返し判定用）
-// 全ての文字を固定幅として扱い、文字数ベースで折り返す
-// これにより、charW()の誤差の影響をなくし、正確なページ分割を実現
-inline int getMaxCharsPerLine() {
-    if (g_useTTFFont) {
-        // TTFモード：フォントサイズで決定
-        if (g_fontSize >= 16) return 14;  // 16px: 230px / 16px ≈ 14文字
-        if (g_fontSize >= 14) return 16;  // 14px: 230px / 14px ≈ 16文字
-        return 19;                         // 12px以下: 230px / 12px ≈ 19文字
-    } else {
-        // 内蔵フォント12px固定: 230px / 11px ≈ 20文字
-        return 20;
-    }
-}
-
 inline int lineH()         { return (g_fontSize >= 16) ? 18 : (g_fontSize + 3); }
 inline int maxLinesN()     { return getContentHeight() / lineH(); }
 
@@ -289,6 +274,21 @@ int charW(int s) {
     }
 }
 
+// ★ フォントサイズごとの1行最大文字数（折り返し判定用）
+// 全ての文字を固定幅として扱い、文字数ベースで折り返す
+// これにより、charW()の誤差の影響をなくし、正確なページ分割を実現
+int getMaxCharsPerLine() {
+    if (g_useTTFFont) {
+        // TTFモード：フォントサイズで決定
+        if (g_fontSize >= 16) return 14;  // 16px: 230px / 16px ≈ 14文字
+        if (g_fontSize >= 14) return 16;  // 14px: 230px / 14px ≈ 16文字
+        return 19;                         // 12px以下: 230px / 12px ≈ 19文字
+    } else {
+        // 内蔵フォント12px固定: 230px / 11px ≈ 20文字
+        return 20;
+    }
+}
+
 void scanTextFiles() {
     g_fileCount = 0;
     File dir = SD.open(TEXTS_DIR);
@@ -423,9 +423,6 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
     // 最後の行を保存
     if (displayLine >= skipLines && lines && lineCount < maxLines) {
         lines[lineCount++] = curLine;
-    }
-    return displayLine + 1;
-}
     }
     return displayLine + 1;
 }

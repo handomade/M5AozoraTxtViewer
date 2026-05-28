@@ -542,9 +542,12 @@ int loadPageLines(const String& filepath, int page, bool aozoraMode,
 
         String wrapped[MAX_LINES_BUF];
         int wrappedCount = 0;
-        int totalWrapped = splitDisplayLines(text, wrapped, MAX_LINES_BUF, 0, wrappedCount);
-        int endSkip = (stopSkip >= 0) ? min(stopSkip, totalWrapped) : totalWrapped;
-        for (int i = startSkip; i < endSkip && lineCount < maxLines && i < wrappedCount; i++) {
+        // ★ startSkipを渡してskip分を生成せず直接必要な行から取得
+        //   旧: skipLines=0で全行生成→i=startSkipから参照 → startSkip>=12で何も出力しないバグ
+        int totalWrapped = splitDisplayLines(text, wrapped, MAX_LINES_BUF, startSkip, wrappedCount);
+        int absEnd = (stopSkip >= 0) ? min(stopSkip, totalWrapped) : totalWrapped;
+        int relEnd = absEnd - startSkip;  // wrapped[]上の相対インデックス
+        for (int i = 0; i < relEnd && lineCount < maxLines && i < wrappedCount; i++) {
             lines[lineCount++] = wrapped[i];
         }
         if (stopSkip >= 0) break;

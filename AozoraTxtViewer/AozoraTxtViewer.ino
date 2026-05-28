@@ -38,7 +38,7 @@
 #define FOOTER_HEIGHT    18
 #define MARGIN_X          5
 #define CONTENT_Y        (HEADER_HEIGHT + 4)
-#define MAX_LINE_PX      (240 - MARGIN_X * 2 - 5)  // 240 - 左右マージン - 余白
+#define MAX_LINE_PX      (240 - MARGIN_X * 2 - 15)  // ★ 225px → 210px（内蔵フォント用に余裕を拡大）
 #define MAX_LINES_BUF    12  // 表示可能な最大行数より余裕を持たせる
 
 // フッター表示制御（動的CONTENT_H計算用）
@@ -47,7 +47,19 @@ inline int getContentHeight() { return (135 - HEADER_HEIGHT - (g_showFooter ? FO
 
 // フォントサイズ（切り替え可能: 10/12/14/16 px）
 int g_fontSize = 12;  // ★ デフォルトは内蔵フォント用に12px
-inline int charW(int s)    { return (s == 1) ? (g_fontSize / 2) : g_fontSize; }
+
+// ★ 内蔵フォント（lgfxJapanGothic_12）の実際の文字幅を計算
+// TTFモード時はg_fontSizeに基づく、内蔵フォント時は固定値を使用
+inline int charW(int s) {
+    if (g_useTTFFont) {
+        return (s == 1) ? (g_fontSize / 2) : g_fontSize;  // TTFモード
+    } else {
+        // 内蔵フォント（lgfxJapanGothic_12）: ASCII約5px、日本語約11px
+        // 実測より若干保守的な値を使用して、右端の文字欠落を防止
+        return (s == 1) ? 5 : 11;
+    }
+}
+
 inline int lineH()         { return (g_fontSize >= 16) ? 18 : (g_fontSize + 3); }
 inline int maxLinesN()     { return getContentHeight() / lineH(); }
 

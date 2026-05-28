@@ -803,17 +803,11 @@ void drawFileRow(int idx, bool selected) {
     M5Cardputer.Display.setCursor(2, yPos + 3);
     M5Cardputer.Display.print(selected ? ">" : " ");
 
-    // ファイル名描画
-    if (g_jpFontLoaded && g_useTTFFont) {
-        g_ofr.setFontColor(fg, bg);
-        String _s = fitLine(fname, 210);
-        g_ofr.drawString(_s.c_str(), MARGIN_X + 12, yPos + 1);
-    } else {
-        M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
-        M5Cardputer.Display.setTextColor(fg, bg);
-        M5Cardputer.Display.setCursor(MARGIN_X + 12, yPos + 1);
-        M5Cardputer.Display.print(fitLine(fname, 210));
-    }
+    // ファイル名描画（テキスト選択画面は内蔵フォント固定）
+    M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+    M5Cardputer.Display.setTextColor(fg, bg);
+    M5Cardputer.Display.setCursor(MARGIN_X + 12, yPos + 1);
+    M5Cardputer.Display.print(fitLine(fname, 210));
 }
 
 // ★ カーソル移動ラッパー（差分描画対応）
@@ -841,7 +835,8 @@ void moveCursor(int newCursor) {
 }
 
 void drawFileSelect() {
-    g_fontSize = 12;  // ★ ファイル選択モードでは常に12px
+    g_fontSize = 12;    // ★ 内蔵フォント固定
+    g_lightMode = true; // ★ テキスト選択画面はライトモード固定（保存はしない）
     M5Cardputer.Display.fillScreen(colBg());
     M5Cardputer.Display.fillRect(0, 0, 240, HEADER_HEIGHT, colHeader());
     M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
@@ -899,18 +894,11 @@ void drawFileListOnly() {
         M5Cardputer.Display.setCursor(2, yPos + 3);
         M5Cardputer.Display.print(selected ? ">" : " ");
 
-        // ファイル名描画
-        if (g_jpFontLoaded && g_useTTFFont) {
-            // ★ setDrawer/setFontSize は drawFileSelect() で一度だけ呼び済み
-            g_ofr.setFontColor(selected ? colBg() : fg, bg);
-            String _s = fitLine(fname, 210);
-            g_ofr.drawString(_s.c_str(), MARGIN_X + 12, yPos + 1);
-        } else {
-            M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
-            M5Cardputer.Display.setTextColor(selected ? colBg() : fg, bg);
-            M5Cardputer.Display.setCursor(MARGIN_X + 12, yPos + 1);
-            M5Cardputer.Display.print(fitLine(fname, 210));
-        }
+        // ファイル名描画（テキスト選択画面は内蔵フォント固定）
+        M5Cardputer.Display.setFont(&fonts::lgfxJapanGothic_12);
+        M5Cardputer.Display.setTextColor(selected ? colBg() : fg, bg);
+        M5Cardputer.Display.setCursor(MARGIN_X + 12, yPos + 1);
+        M5Cardputer.Display.print(fitLine(fname, 210));
 
         yPos += FILE_ROW_H;
     }

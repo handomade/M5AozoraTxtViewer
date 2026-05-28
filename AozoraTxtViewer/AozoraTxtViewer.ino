@@ -59,14 +59,13 @@ inline int maxLinesN()     { return getContentHeight() / lineH(); }
 // 1行からルビ・注記を除去して返す
 String removeAozoraMarkup(const String& line) {
     String out;
-    out.reserve(line.length());
     int len = line.length();
+    out.reserve(len);  // ★ 事前に同じサイズを予約
     const char* p = line.c_str();
     int pos = 0;
     
     while (pos < len && *p) {
         // 「《」(E3 80 8A) → 「》」(E3 80 8B) を読み飛ばす
-        // ★ pos + 3 <= len でバッファ境界チェック
         if (pos + 3 <= len && (uint8_t)p[0]==0xE3 && (uint8_t)p[1]==0x80 && (uint8_t)p[2]==0x8A) {
             p += 3; pos += 3;
             while (pos <= len && *p) {
@@ -75,7 +74,7 @@ String removeAozoraMarkup(const String& line) {
                 }
                 uint8_t c = (uint8_t)*p;
                 int bytes = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
-                if (pos + bytes > len) break;  // ★ バイト数チェック
+                if (pos + bytes > len) break;
                 p += bytes; pos += bytes;
             }
             continue;
@@ -93,15 +92,16 @@ String removeAozoraMarkup(const String& line) {
                 }
                 uint8_t c = (uint8_t)*p;
                 int bytes = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
-                if (pos + bytes > len) break;  // ★ バイト数チェック
+                if (pos + bytes > len) break;
                 p += bytes; pos += bytes;
             }
             continue;
         }
         uint8_t c = (uint8_t)*p;
         int bytes = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
-        if (pos + bytes > len) break;  // ★ 出力時もバイト数チェック
-        for (int i = 0; i < bytes; i++) out += p[i];
+        if (pos + bytes > len) break;
+        // ★ マルチバイト文字を一度に追加（1バイトずつではなく）
+        out.concat(p, bytes);
         p += bytes; pos += bytes;
     }
     return out;
@@ -326,15 +326,15 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
     int textLen = text.length();
     const char* p = text.c_str();
     String curLine;
+    curLine.reserve(256);  // ★ 1行の最大バイト数を確保（256バイト = 約50文字）
     int usedPx = 0;
     int displayLine = 0;
-    int pos = 0;  // ★ 文字列内の現在位置を追跡
+    int pos = 0;
 
     while (pos < textLen && *p) {
         uint8_t c = (uint8_t)*p;
         int step = (c < 0x80) ? 1 : (c < 0xE0) ? 2 : (c < 0xF0) ? 3 : 4;
         
-        // ★ バッファ境界チェック：バイト数がテキスト長を超えないか確認
         if (pos + step > textLen) break;
         
         int w = charW(step);
@@ -345,6 +345,7 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
             }
             displayLine++;
             curLine = "";
+            curLine.reserve(256);  // ★ 新しい行でもバッファを確保
             usedPx = 0;
             
             // maxLinesに到達した場合は残りの行をカウントのみ
@@ -352,7 +353,7 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
                 while (pos < textLen && *p) {
                     uint8_t c2 = (uint8_t)*p;
                     int step2 = (c2 < 0x80) ? 1 : (c2 < 0xE0) ? 2 : (c2 < 0xF0) ? 3 : 4;
-                    if (pos + step2 > textLen) break;  // ★ バッファ境界チェック
+                    if (pos + step2 > textLen) break;
                     int w2 = charW(step2);
                     if (usedPx + w2 > MAX_LINE_PX) { displayLine++; usedPx = 0; }
                     usedPx += w2;
@@ -360,11 +361,10 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
                 }
                 return displayLine + 1;
             }
-            // ★ 折り返し後も同じループで同じ文字を処理（pはまだそこを指している）
         }
         
-        // 現在の文字をcurLineに追加
-        for (int i = 0; i < step; i++) curLine += (char)*(p + i);
+        // ★ マルチバイト文字を一度に追加（1バイトずつではなく）
+        curLine.concat(p, step);
         usedPx += w;
         p += step; pos += step;
     }
@@ -374,7 +374,7 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
         lines[lineCount++] = curLine;
     }
     return displayLine + 1;
-}
+}}
 
 // ---- 1行を処理してページに収まる行数を返す ----
 // aozoraMode=trueのときはmarkup除去・skip判定を適用する

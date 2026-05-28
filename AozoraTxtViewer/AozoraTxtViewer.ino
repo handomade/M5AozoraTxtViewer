@@ -85,6 +85,21 @@ int g_fontSize = 12;  // ★ デフォルトは内蔵フォント用に12px
 //   - 1ページの最大行数：5行
 //   - 1行の最大文字数：230 / 16 ≈ 14文字
 
+// ★ フォントサイズごとの1行最大文字数（折り返し判定用）
+// 全ての文字を固定幅として扱い、文字数ベースで折り返す
+// これにより、charW()の誤差の影響をなくし、正確なページ分割を実現
+inline int getMaxCharsPerLine() {
+    if (g_useTTFFont) {
+        // TTFモード：フォントサイズで決定
+        if (g_fontSize >= 16) return 14;  // 16px: 230px / 16px ≈ 14文字
+        if (g_fontSize >= 14) return 16;  // 14px: 230px / 14px ≈ 16文字
+        return 19;                         // 12px以下: 230px / 12px ≈ 19文字
+    } else {
+        // 内蔵フォント12px固定: 230px / 11px ≈ 20文字
+        return 20;
+    }
+}
+
 inline int lineH()         { return (g_fontSize >= 16) ? 18 : (g_fontSize + 3); }
 inline int maxLinesN()     { return getContentHeight() / lineH(); }
 
@@ -362,8 +377,9 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
     int textLen = text.length();
     const char* p = text.c_str();
     String curLine;
-    curLine.reserve(256);  // ★ 1行の最大バイト数を確保（256バイト = 約50文字）
-    int usedPx = 0;
+    curLine.reserve(256);
+    int charsInLine = 0;  // ★ 文字数カウント（折り返し判定用）
+    int maxCharsPerLine = getMaxCharsPerLine();  // ★ 最大文字数を取得
     int displayLine = 0;
     int pos = 0;
 
@@ -373,16 +389,16 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
         
         if (pos + step > textLen) break;
         
-        int w = charW(step);
-        if (usedPx + w > MAX_LINE_PX) {
+        // ★ 折り返し判定：ピクセル幅ではなく「文字数」ベース
+        if (charsInLine >= maxCharsPerLine) {
             // 行が満杯になった → 現在の行を保存して折り返す
             if (displayLine >= skipLines && lines && lineCount < maxLines) {
                 lines[lineCount++] = curLine;
             }
             displayLine++;
             curLine = "";
-            curLine.reserve(256);  // ★ 新しい行でもバッファを確保
-            usedPx = 0;
+            curLine.reserve(256);
+            charsInLine = 0;
             
             // maxLinesに到達した場合は残りの行をカウントのみ
             if (lines && lineCount >= maxLines) {
@@ -390,24 +406,26 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
                     uint8_t c2 = (uint8_t)*p;
                     int step2 = (c2 < 0x80) ? 1 : (c2 < 0xE0) ? 2 : (c2 < 0xF0) ? 3 : 4;
                     if (pos + step2 > textLen) break;
-                    int w2 = charW(step2);
-                    if (usedPx + w2 > MAX_LINE_PX) { displayLine++; usedPx = 0; }
-                    usedPx += w2;
+                    charsInLine++;
+                    if (charsInLine >= maxCharsPerLine) { displayLine++; charsInLine = 0; }
                     p += step2; pos += step2;
                 }
                 return displayLine + 1;
             }
         }
         
-        // ★ マルチバイト文字を一度に追加（1バイトずつではなく）
+        // ★ マルチバイト文字を一度に追加
         curLine.concat(p, step);
-        usedPx += w;
+        charsInLine++;  // ★ 文字数をインクリメント
         p += step; pos += step;
     }
 
     // 最後の行を保存
     if (displayLine >= skipLines && lines && lineCount < maxLines) {
         lines[lineCount++] = curLine;
+    }
+    return displayLine + 1;
+}
     }
     return displayLine + 1;
 }

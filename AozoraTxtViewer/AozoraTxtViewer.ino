@@ -307,10 +307,9 @@ void scanTextFiles() {
 // 読書エンジン
 // ============================================================
 #define PAGE_OFFSETS_MAX 2048
-// 1行バッファ：日本語1文字3バイト×最大120文字 = 360バイト + 余裕
-// getMaxCharsPerLine()の最大値は20文字だが、青空ルビ除去前の生テキストは
-// 《...》などのマークアップ込みで長くなるため余裕を持たせる
-#define READ_BUF_SIZE    512
+// 1行バッファ：青空文庫は長い段落が1行になる場合があり、日本語300文字×3バイト+ルビで最大~1000バイト超
+// 512では長い段落で切断→文字化けが起きるため2048に拡大
+#define READ_BUF_SIZE    2048
 #define PAGE_CACHE_SIZE  3
 
 String   g_currentFile = "";
@@ -377,11 +376,14 @@ bool loadMode(const String& filepath) {
 //    バッファ切断位置のズレによるページ境界ミスを防ぐ
 int readLine(File& f, char* buf, int bufSize) {
     int len = 0;
-    while (f.available() && len < bufSize - 1) {
+    while (f.available()) {
         char c = f.read();
         if (c == '\n') break;
         if (c == '\r') continue;
-        buf[len++] = c;
+        if (len < bufSize - 1) {
+            buf[len++] = c;
+        }
+        // バッファ満杯でも行末(\n)まで読み捨て：ファイル位置ズレを防ぐ
     }
     // UTF-8マルチバイト文字がバッファ末尾で切断されるのを防ぐ
     // 先頭バイト(0x00-0x7F or 0xC0-0xFF)が来るまで末尾を削る

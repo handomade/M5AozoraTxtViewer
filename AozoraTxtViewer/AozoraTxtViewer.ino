@@ -23,6 +23,11 @@
 #include <OpenFontRender.h>
 #include "ofrfs/M5Stack_SD_Preset.h"
 
+// ★ 関数の前方宣言（前方位置で定義される関数を先に宣言）
+void drawProgressBar(int progress);
+void saveSettings();
+void drawFileListOnly();
+
 // ============================================================
 // ピン定義（MP3プレイヤーと同じ）
 // ============================================================
@@ -374,7 +379,7 @@ int splitDisplayLines(const String& text, String lines[], int maxLines,
         lines[lineCount++] = curLine;
     }
     return displayLine + 1;
-}}
+}
 
 // ---- 1行を処理してページに収まる行数を返す ----
 // aozoraMode=trueのときはmarkup除去・skip判定を適用する

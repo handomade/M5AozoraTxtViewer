@@ -346,11 +346,13 @@ String makeKey(const String& filepath, const char* suffix) {
     return key + suffix;
 }
 
-// ---- しおり + モード 保存 ----
+// ---- しおり + モード + フォント状態 保存 ----
+// フォントコード: 0=内蔵フォント(12px固定), 10/12/14/16=TTFサイズ
 void saveState(const String& filepath, int page, bool aozora) {
     g_prefs.begin("aozora", false);
     g_prefs.putInt(makeKey(filepath, "_p").c_str(), page);
     g_prefs.putBool(makeKey(filepath, "_m").c_str(), aozora);
+    g_prefs.putInt(makeKey(filepath, "_f").c_str(), g_useTTFFont ? g_fontSize : 0);
     g_prefs.end();
 }
 
@@ -368,6 +370,27 @@ bool loadMode(const String& filepath) {
     bool aozora = g_prefs.getBool(makeKey(filepath, "_m").c_str(), true);
     g_prefs.end();
     return aozora;
+}
+
+// ---- フォント状態復元（ファイルごとのフォントモード・サイズ） ----
+// 未保存(-1)の場合は現在のグローバル設定をそのまま使用
+void loadFontState(const String& filepath) {
+    g_prefs.begin("aozora", true);
+    int fontCode = g_prefs.getInt(makeKey(filepath, "_f").c_str(), -1);
+    g_prefs.end();
+    if (fontCode == -1) return;  // 初回: グローバル設定を維持
+    if (fontCode == 0) {
+        g_useTTFFont = false;
+        g_fontSize   = 12;
+    } else if (g_jpFontLoaded) {
+        // TTF利用可能な場合のみ復元（未ロードなら内蔵フォントにフォールバック）
+        g_useTTFFont = true;
+        g_fontSize   = (fontCode == 10 || fontCode == 12 || fontCode == 14 || fontCode == 16)
+                       ? fontCode : 12;
+    } else {
+        g_useTTFFont = false;
+        g_fontSize   = 12;
+    }
 }
 
 // ---- ファイルから1行読み込む共通関数 ----
@@ -1126,13 +1149,8 @@ void openFile(const String& filepath) {
     g_currentFile  = filepath;
     g_currentPage  = 0;
     g_pageCount    = 0;
-    g_aozoraMode   = loadMode(filepath);   // ← ファイルごとのモードを復元
-
-    // ★ ファイル開き時にフォントサイズを正しく設定
-    if (!g_useTTFFont) {
-        g_fontSize = 12;  // 内蔵フォントは常に12px
-    }
-    // TTFモードの場合は、前回保存されたg_fontSizeを使用（loadSettings()で既に読み込み済み）
+    g_aozoraMode   = loadMode(filepath);     // ← ファイルごとのモードを復元
+    loadFontState(filepath);                   // ← ファイルごとのフォント状態を復元
 
     if (!buildPageIndex(filepath, g_aozoraMode)) {
         M5Cardputer.Display.setTextColor(TFT_RED);

@@ -1,4 +1,4 @@
-# AozoraTxtViewer v1.1 ユーザーガイド
+# AozoraTxtViewer v1.2 ユーザーガイド
 
 M5Cardputer 用 青空文庫テキストビューワー
 

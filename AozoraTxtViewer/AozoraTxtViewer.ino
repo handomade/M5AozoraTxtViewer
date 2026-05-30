@@ -1032,7 +1032,7 @@ bool showHelp() {
     // タイトル
     M5Cardputer.Display.setTextColor(colAccent(), colHeader());
     M5Cardputer.Display.setCursor(px + 6, py + 5);
-    M5Cardputer.Display.print("AozoraTxtViewer v1.1");
+    M5Cardputer.Display.print("AozoraTxtViewer v1.2");
     M5Cardputer.Display.drawFastHLine(px + 4, py + 16, pw - 8, colPanelDim());
 
     // 操作一覧
@@ -1278,7 +1278,7 @@ void setup() {
     M5Cardputer.Display.setRotation(1);
 
     loadSettings();  // NVSから色・フォントサイズを復元
-    applyBrightness(g_brightnessValues[g_brightnessLevel]);  // ★ バックライト初期化
+    applyBrightness(g_brightnessLevel == 0 ? 20 : g_brightnessValues[g_brightnessLevel]);  // ★ バックライト初期化（level=0保存時も起動時は最低20）
     clearPageCache();
     M5Cardputer.Display.fillScreen(colBg());
     M5Cardputer.Display.setFont(&fonts::Font0);
